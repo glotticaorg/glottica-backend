@@ -1,0 +1,70 @@
+name: Deploy
+
+on:
+  push:
+    branches: [ master ]
+
+env:
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  CDK_DISABLE_TELEMETRY: 1
+  BUCKET: ${{ secrets.AWS_LAMBDA_BUCKET }}
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: 'deploy-backend'
+  cancel-in-progress: false
+
+jobs:
+  deploy-lambda:
+    name: Upload the backend to AWS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build backend bundle
+        run: npm run build
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          mask-aws-account-id: true
+          unset-current-credentials: true
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Upload to bucket
+        id: code_upload
+        run: |
+          zip -r handler.zip dist/
+          VERSION_ID=$(aws s3api put-object \
+            --bucket $BUCKET \
+            --key apiLambdaCode/handler.zip \
+            --body ./handler.zip \
+            --query VersionId \
+            --region eu-west-1)
+          echo "version_id=$VERSION_ID" >> $GITHUB_OUTPUT
+
+      - name: Update SSM version value
+        run: |
+          aws ssm put-parameter \
+          --name "/glotticaorg/api/lambda-version" \
+          --value ${{ steps.code_upload.outputs.version_id }} \
+          --type String \
+          --overwrite
+
+  deploy-infra:
+    name: Deploy the backend to AWS
+    needs: deploy-lambda
+    uses: glotticaorg/glottica-infra/.github/workflows/cdk-deploy.yml@master
+    secrets: inherit
