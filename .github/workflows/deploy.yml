@@ -46,6 +46,7 @@ jobs:
       - name: Upload to bucket
         id: code_upload
         run: |
+          rm ./dist/index.js
           zip -r handler.zip dist/
           VERSION_ID=$(aws s3api put-object \
             --bucket $BUCKET \
